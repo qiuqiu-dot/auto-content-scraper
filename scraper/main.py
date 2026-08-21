@@ -8,6 +8,7 @@ import datetime
 import html
 import json
 import os
+import re
 import sys
 import time
 from typing import Dict, List
@@ -22,6 +23,7 @@ from scraper.content import extract, is_download_or_resource_site
 from scraper.fetch import Fetcher
 from scraper.reputation import final_reputation
 import scraper.aria2 as aria2
+import scraper.github_tools as github_tools
 
 DEFAULT_QUERIES = [
     "优质下载站 软件 绿色免安装 推荐",
@@ -293,17 +295,19 @@ def print_to_terminal(rows: List[dict], show_text: bool = True) -> None:
     print("\n" + "=" * 68)
 
 
-def run_downloads(rows: List[dict], threads: int, outdir: str) -> List[dict]:
-    """从结果里提取下载链接并用 aria2 批量下载。"""
+def run_downloads(rows: List[dict], threads: int, outdir: str,
+                  use_ytdlp: bool = False, ytdlp_format: str = "bestvideo+bestaudio/best") -> List[dict]:
+    """从结果里提取下载链接并用 aria2/yt-dlp 批量下载。"""
     links = aria2.find_download_links(rows)
     if not links:
         print("\n[下载] 结果里没有识别到可下载文件链接。")
         print("提示：可以用 --download 直接抓某个下载页，程序会把页内的可下载链接交给 aria2。")
         return []
-    print(f"\n[下载] 从结果提取到 {len(links)} 个可下载链接，开始 aria2 多线程下载"
-          f"（线程: -x{threads}/-s{threads}）...")
+    print(f"\n[下载] 从结果提取到 {len(links)} 个可下载链接，开始下载"
+          f"（线程: -x{threads}/-s{threads}" + (", yt-dlp" if use_ytdlp else "") + "）...")
     results = aria2.batch_download(
-        [l["url"] for l in links], threads=threads, outdir=outdir
+        [l["url"] for l in links], threads=threads, outdir=outdir,
+        verbose=True, use_ytdlp=use_ytdlp, ytdlp_format=ytdlp_format
     )
     ok_count = sum(1 for r in results if r["ok"])
     print(f"\n[下载] 完成：成功 {ok_count} / {len(results)}。输出目录: {outdir}")
@@ -361,6 +365,10 @@ def main():
                    help="抓取完成后，把页面内识别到的下载链接交给 aria2 下载")
     p.add_argument("--threads", "-t", type=int, default=8,
                    help="aria2 多线程下载线程数（-x/-s，默认8）")
+    p.add_argument("--ytdlp", action="store_true",
+                   help="对视频链接使用 yt-dlp 下载（需安装 yt-dlp）")
+    p.add_argument("--ytdlp-format", default="bestvideo+bestaudio/best",
+                   help="yt-dlp 格式选择（默认 bestvideo+bestaudio/best）")
     p.add_argument("--download-json", help="从已生成的 scrape.json 提取下载链接并下载")
     p.add_argument("--dl-out", default="downloads", help="下载输出目录（默认 downloads/）")
     # ---- 显示/保存 ----
@@ -386,7 +394,8 @@ def main():
         with open(args.download_json, "r", encoding="utf-8") as f:
             data = json.load(f)
         rows = data.get("results", [])
-        run_downloads(rows, threads=args.threads, outdir=args.dl_out)
+        run_downloads(rows, threads=args.threads, outdir=args.dl_out,
+                      use_ytdlp=args.ytdlp, ytdlp_format=args.ytdlp_format)
         return
 
     # ---------- 模式B：手动网址抓取（可选 +下载） ----------
@@ -402,13 +411,36 @@ def main():
             title = "手动网址抓取报告"
             export(rows, outdir, ["手动URL"], title)
         if args.download:
-            run_downloads(rows, threads=args.threads, outdir=args.dl_out)
+            run_downloads(rows, threads=args.threads, outdir=args.dl_out,
+                          use_ytdlp=args.ytdlp, ytdlp_format=args.ytdlp_format)
         return
 
     # ---------- 模式C：Bing 搜索（可选 +下载） ----------
     queries = args.query or list(DEFAULT_QUERIES)
     if args.interactive:
         print("==== 交互模式 ====")
+        print("  1) 搜索并抓取资源站 (Bing)")
+        print("  2) GitHub 专区 (克隆/发行版/搜索)")
+        print("  3) 手动输入网址抓取")
+        mode = input("  请选择模式 [1-3]: ").strip()
+        if mode == "2":
+            github_tools.github_interactive_menu()
+            return
+        elif mode == "3":
+            urls_input = input("  输入网址(逗号/空格分隔): ").strip()
+            if urls_input:
+                urls = [u.strip() for u in re.split(r"[,，\s]+", urls_input) if u.strip()]
+                rows = fetch_urls_manual(urls, delay=args.delay, timeout=args.timeout)
+                print_to_terminal(rows, show_text=not getattr(args, "no_text", False))
+                if args.save:
+                    outdir = make_outdir(args.output)
+                    title = "手动网址抓取报告"
+                    export(rows, outdir, ["手动URL"], title)
+                if args.download:
+                    run_downloads(rows, threads=args.threads, outdir=args.dl_out,
+                                  use_ytdlp=args.ytdlp, ytdlp_format=args.ytdlp_format)
+                return
+        # 模式 1: 默认 Bing 搜索
         q = input("输入搜索关键字(逗号分隔，留空用默认): ").strip()
         if q:
             queries = [x.strip() for x in q.split("，" if "，" in q else ",") if x.strip()]
@@ -429,7 +461,8 @@ def main():
     print_to_terminal(rows, show_text=False)
 
     if args.download:
-        run_downloads(rows, threads=args.threads, outdir=args.dl_out)
+        run_downloads(rows, threads=args.threads, outdir=args.dl_out,
+                      use_ytdlp=args.ytdlp, ytdlp_format=args.ytdlp_format)
     elif not args.save:
         print("\n提示：加 -f 保存到文件；加 --download --threads <N> 可下载页内文件链接。")
 
