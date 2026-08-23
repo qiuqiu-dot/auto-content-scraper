@@ -1,8 +1,8 @@
-# Auto Content Scraper（自动优质内容抓取器）
+# Auto Content Scraper
 
 自动抓取「网上优质内容 / 资源站 / 下载站」的程序。
 通过 **Bing 搜索** 或 **手动输入网址** 发现/抓取内容，结合 **信誉站白名单库** 与启发式打分做可信度评估，
-并支持 **aria2 多线程下载**页面中的文件链接。结果导出为 JSON / CSV / HTML 报告。
+并支持 **aria2 多线程下载** 页面中的文件链接。结果导出为 JSON / CSV / HTML 报告。
 
 ## 功能
 
@@ -19,13 +19,14 @@
 auto-content-scraper/
 ├── scraper/
 │   ├── __init__.py
+│   ├── main.py          # 命令行入口
 │   ├── bing_search.py   # Bing 搜索结果解析
 │   ├── sites.py         # 信誉白名单库 + 域名/类型判定
 │   ├── fetch.py         # HTTP 抓取（robots、限速、UA、重试）
 │   ├── reputation.py    # 信誉打分与过滤
 │   ├── content.py       # 正文/链接/元信息/下载链接抽取
 │   ├── aria2.py         # aria2 多线程下载 + 兜底下载
-│   └── main.py          # 命令行入口 + 编排
+│   └── main.py          # 命令行入口
 ├── results/             # 导出的 JSON / CSV / HTML
 ├── requirements.txt
 └── README.md
@@ -48,7 +49,7 @@ pip install requests beautifulsoup4
 ```bash
 python -m scraper.main                                             # 默认关键字
 python -m scraper.main --interactive                               # 交互输入关键字
-python -m scraper.main -q "下载站 推荐" -q "linux 发行版 iso" -m 20 # 多关键字
+python -m scraper.main -q "下载站 推荐" -q "linux 发行版 iso" -m 20  # 多关键字
 ```
 
 ### 2) 手动输入网址抓取
@@ -74,24 +75,24 @@ python -m scraper.main --download-json results/20260817_xxx/scrape.json --thread
 | `--query` / `-q` | 内置一组 | 搜索关键字（可多次） |
 | `--results` / `-r` | 10 | 每关键字 Bing 结果条数 |
 | `--max-sites` / `-m` | 20 | 最多抓取评估站点数 |
-| `--url` | - | 手动抓取的网址（可多次） |
-| `--url-file` | - | 网址列表文件（每行一个，`#` 为注释） |
-| `--download` | off | 抓取后把识别到的文件链接交给 aria2 下载 |
-| `--threads` / `-t` | 8 | aria2 线程数（-x/-s 分段数） |
-| `--download-json` | - | 从已有 scrape.json 提取下载链接并下载 |
-| `--dl-out` | downloads/ | 下载输出目录 |
-| `--reputable-only` | judge | `yes`/`no`/`judge` |
+| `--url` | - | 手动要抓取的网址（可多次，或 `--url-file`） |
+| `--url-file` | - | URL 文件路径，每行一个网址 |
+| `--download` | off | 抓取完成后，把页面内识别到的下载链接交给 aria2 下载 |
+| `--threads` / `-t` | 8 | aria2 多线程下载线程数（-x/-s，默认8） |
+| `--download-json` | - | 从已生成的 scrape.json 提取下载链接并下载 |
+| `--dl-out` | downloads/ | 下载输出目录（默认 downloads/） |
+| `--reputable-only` | judge | 只保留高信誉(yes)? 全部(no)? 智能过滤(judge) |
 | `--min-score` | 40 | 保留的最低信用分（0-100） |
 | `--delay` / `-d` | 1.5 | 抓取间隔秒（限速） |
 | `--timeout` | 12 | 每页超时秒 |
-| `--respect-robots` | off | 遵守目标 robots.txt |
+| `--respect-robots` | off | 遵守抓取目标 robots.txt（默认关闭以增强可用性） |
 | `--output` / `-o` | `.` | 输出根目录 |
 
 ## 输出
 
 - `results/<时间戳>/scrape.json` — 全量结构化数据
 - `results/<时间戳>/scrape.csv` — 站点摘要（Excel 友好）
-- `results/<时间戳>/report.html` — 自包含可视化报告
+- `results/<时间戳>/report.html` — 自包含可视化报告（双击打开）
 - `downloads/` — aria2 下载的文件（可用 `--dl-out` 改目录）
 
 ## 说明与合规
