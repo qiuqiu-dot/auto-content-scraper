@@ -10,8 +10,23 @@
 - 🔗 **手动网址抓取**：直接输入一个或多个网址抓取，无需搜索。
 - 🏅 **信誉评估**：内置 90+ 个信誉较好的下载/资源/官方站白名单；站外站点按域名 + 页面内容启发式打分（自动识别盗版/破解/广告站降分）。
 - 📦 **内容抓取**：抽取正文、标题、meta、链接与下载链接；遵循限速、超时重试；robots.txt 默认关闭以增强可用性（可 `--respect-robots` 开启）。
-- ⚡ **aria2 多线程下载**：把页面/结果里识别到的文件链接交给 aria2c，用 `-x/-s` 指定分段线程数高速下载。
+- ⚡ **aria2 多线程下载**：把页面/结果里识别到的文件链接交给 aria2c，用 `-x/-s` 指定分段线程数高速下载，支持 yt-dlp 视频下载。
 - 📄 **导出**：JSON 全量 + CSV 摘要 + 自包含 HTML 可视化报告。
+
+## 核心工作流：搜索 → 抓取 → 评分 → 下载 → 导出（一条龙）
+
+```bash
+# 一条命令完成：搜索 → 抓取 → 评分 → 多线程下载 → 保存报告
+python -m scraper.main \
+  -q "软件下载站 推荐" \
+  -q "linux 发行版 iso" \
+  -m 20 \
+  -r 10 \
+  --download \
+  --threads 16 \
+  --ytdlp \
+  -f
+```
 
 ## 目录结构
 
@@ -26,6 +41,7 @@ auto-content-scraper/
 │   ├── reputation.py    # 信誉打分与过滤
 │   ├── content.py       # 正文/链接/元信息/下载链接抽取
 │   ├── aria2.py         # aria2 多线程下载 + 兜底下载
+│   └── main.py          # 命令行入口
 ├── results/             # 导出的 JSON / CSV / HTML
 ├── requirements.txt
 └── README.md
@@ -40,9 +56,26 @@ pip install requests beautifulsoup4
 #   Termux:  pkg install aria2
 #   Debian/Ubuntu/Mac:  apt/brew install aria2
 #   Windows: 下载 aria2c.exe 并放入 PATH
+# 可选：视频下载
+#   pip install yt-dlp
 ```
 
 ## 使用方法
+
+### 核心工作流：搜索 → 抓取 → 评分 → 下载 → 导出（一条龙）
+
+```bash
+# 一条命令完成：搜索 → 抓取 → 评分 → 多线程下载 → 保存报告
+python -m scraper.main \
+  -q "软件下载站 推荐" \
+  -q "linux 发行版 iso" \
+  -m 20 \
+  -r 10 \
+  --download \
+  --threads 16 \
+  --ytdlp \
+  -f
+```
 
 ### 1) Bing 搜索抓取资源站
 ```bash
@@ -67,27 +100,60 @@ python -m scraper.main --url https://example.com/downloadpage --download --threa
 python -m scraper.main --download-json results/20260817_xxx/scrape.json --threads 16
 ```
 
-### 常用参数
+### 组合参数速查表
 
-| 参数 | 默认 | 说明 |
-|---|---|---|
-| `--query` / `-q` | 内置一组 | 搜索关键字（可多次） |
-| `--results` / `-r` | 10 | 每关键字 Bing 结果条数 |
-| `--max-sites` / `-m` | 20 | 最多抓取评估站点数 |
-| `--url` | - | 手动要抓取的网址（可多次，或 `--url-file`） |
-| `--url-file` | - | URL 文件路径，每行一个网址 |
-| `--download` | off | 抓取完成后，把页面内识别到的下载链接交给 aria2 下载 |
-| `--threads` / `-t` | 8 | aria2 多线程下载线程数（-x/-s，默认8） |
-| `--download-json` | - | 从已生成的 scrape.json 提取下载链接并下载 |
-| `--dl-out` | downloads/ | 下载输出目录（默认 downloads/） |
-| `--reputable-only` | judge | 只保留高信誉(yes)? 全部(no)? 智能过滤(judge) |
-| `--min-score` | 40 | 保留的最低信用分（0-100） |
-| `--delay` / `-d` | 1.5 | 抓取间隔秒（限速） |
-| `--timeout` | 12 | 每页超时秒 |
-| `--respect-robots` | off | 遵守抓取目标 robots.txt（默认关闭以增强可用性） |
-| `--output` / `-o` | `.` | 输出根目录 |
+| 阶段 | 参数 | 说明 | 示例 |
+|------|------|------|------|
+| **搜索** | `-q`, `--query` | 搜索关键字（可多次） | `-q "下载站" -q "iso 镜像"` |
+| | `-r`, `--results` | 每关键字 Bing 结果条数 | `-r 10` |
+| | `--interactive` | 交互式输入关键字 | `--interactive` |
+| **抓取** | `-m`, `--max-sites` | 最大抓取评估站点数 | `-m 20` |
+| | `--reputable-only` | yes/no/judge 过滤模式 | `--reputable-only judge` |
+| | `--min-score` | 最低信用分 (0-100) | `--min-score 40` |
+| | `--delay` / `-d` | 抓取间隔秒（限速） | `-d 1.5` |
+| | `--timeout` | 每页超时秒 | `--timeout 12` |
+| | `--respect-robots` | 遵守 robots.txt | `--respect-robots` |
+| **下载** | `--download` | 启用下载 | `--download` |
+| | `--threads` / `-t` | aria2 线程数 (-x/-s) | `-t 16` |
+| | `--ytdlp` | 启用 yt-dlp 视频下载 | `--ytdlp` |
+| | `--ytdlp-format` | yt-dlp 格式 | `--ytdlp-format "bestvideo+bestaudio/best"` |
+| | `--dl-out` | 下载输出目录 | `--dl-out ./downloads` |
+| **离线下载** | `--download-json` | 从已有 scrape.json 下载 | `--download-json results/xxx/scrape.json` |
+| **导出** | `-f`, `--save` | 保存文件（JSON/CSV/HTML） | `-f` |
+| | `--output`, `-o` | 输出根目录 | `-o ./output` |
 
-## 输出
+### 常用组合示例
+
+```bash
+# 1) 搜索 + 下载 + 保存报告（最常用）
+python -m scraper.main -q "软件下载站 推荐" -q "linux iso" -m 20 -r 10 --download --threads 16 --ytdlp -f
+
+# 2) 仅搜索 + 保存报告（不下载）
+python -m scraper.main -q "下载站 推荐" -f
+
+# 3) 手动 URL + 下载
+python -m scraper.main --url "https://example.com/download" --download --threads 16
+
+# 4) 批量 URL 文件 + 下载
+python -m scraper.main --url-file urls.txt --download --threads 16
+
+# 4) 离线下载（从已有结果 JSON 下载）
+python -m scraper.main --download-json results/20260817_xxx/scrape.json --threads 16 --ytdlp
+
+# 5) 交互模式（菜单选择）
+python -m scraper.main --interactive
+```
+
+### 交互模式菜单
+```
+==== 交互模式 ====
+  1) 搜索并抓取资源站 (Bing)
+  2) GitHub 专区 (克隆/发行版/搜索)
+  3) 手动输入网址抓取
+  请选择模式 [1-3]:
+```
+
+### 输出文件
 
 - `results/<时间戳>/scrape.json` — 全量结构化数据
 - `results/<时间戳>/scrape.csv` — 站点摘要（Excel 友好）
