@@ -26,7 +26,7 @@ auto-content-scraper/
 │   ├── reputation.py    # 信誉打分与过滤
 │   ├── content.py       # 正文/链接/元信息/下载链接抽取
 │   ├── aria2.py         # aria2 多线程下载 + 兜底下载
-│   └── main.py          # 命令行入口
+│   └── main.py          # 命令行入口(尽量别用，可能有bug)
 ├── results/             # 导出的 JSON / CSV / HTML
 ├── requirements.txt
 └── README.md
