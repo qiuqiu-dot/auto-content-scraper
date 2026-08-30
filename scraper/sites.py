@@ -98,6 +98,7 @@ REPUTABLE_DOMAINS: Dict[str, tuple] = {
     "alternativeto.net": ("resource", 85, "AlternativeTo 替代软件"),
     "producthunt.com": ("resource", 82, "Product Hunt"),
     "distrowatch.com": ("resource", 80, "DistroWatch 发行版"),
+    "deepseek.com": ("resource", 100, "DeepSeek官网"),
 }
 
 

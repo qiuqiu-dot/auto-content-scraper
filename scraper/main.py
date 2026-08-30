@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""命令行入口：Bing 搜索 -> 信誉评估 -> 抓取内容 -> 导出报告。"""
+"""命令行入口：Bing 搜索 -> 信誉评估 -> 抓取内容 -> 导出报告。支持 yt-dlp 直接下载视频。"""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +9,8 @@ import html
 import json
 import os
 import re
+import shlex
+import subprocess
 import sys
 import time
 from typing import Dict, List
@@ -61,7 +63,6 @@ def build_report_site(row: dict) -> Dict:
 
 
 def render_html(title: str, rows: List[dict], meta: dict) -> str:
-    """生成自包含 HTML 报告。"""
     cards = []
     for r in rows:
         score = r["reputation"]
@@ -127,12 +128,10 @@ def gather(
     timeout: int,
     reputable_only: str,  # 'yes' | 'no' | 'judge'
 ) -> List[dict]:
-    """主流程：搜索 -> 排序候选 -> 抓取评估 -> 返回结果列表。"""
     print("\n[1/3] 开始 Bing 搜索...")
     found = search_multiple(queries, pages=pages, delay=delay * 0.4, timeout=timeout)
     print(f"\n  共收集到 {len(found)} 条候选 URL。")
 
-    # 去重（按 netloc 计数注意不要过度去重，这里按 URL 去重）
     seen_url: set = set()
     cands: List[dict] = []
     for r in found:
@@ -141,11 +140,9 @@ def gather(
         seen_url.add(r.url)
         cands.append({"title": r.title, "url": r.url, "snippet": r.snippet})
 
-    # 优先白名单站 + 域名计数排序，保证抓取量在控制在 max_sites 内
     cands.sort(key=lambda x: (sites.is_reputable(urlparse(x["url"]).netloc), x["url"]),
                reverse=True)
 
-    # [2/3] 抓取与评估
     import scraper.main as _m
     respect = _m._RESPECT_ROBOTS
     fetcher = Fetcher(delay=delay, timeout=timeout, respect_robots=respect)
@@ -166,7 +163,6 @@ def gather(
         if feats:
             note += "；特征:" + ",".join(feats)
 
-        # 过滤逻辑
         drop = False
         if reputable_only == "yes" and rep.final_score < min_score:
             drop = True
@@ -174,7 +170,6 @@ def gather(
             drop = True
         if drop:
             print(f"信用分 {rep.final_score}，低于门槛，丢弃。")
-            # 仍记录但标记 low
             row = {
                 "title": ec.title or c["title"],
                 "url": url, "netloc": netloc,
@@ -210,13 +205,11 @@ def gather(
         })
         time.sleep(delay * 0.3)
 
-    # [3/3] 排序输出
     rows.sort(key=lambda x: (x["reputation"], x["text_len"]), reverse=True)
     return rows
 
 
 def fetch_urls_manual(urls: List[str], delay: float, timeout: int) -> List[dict]:
-    """不经过搜索，直接抓取用户手动给出的 URL 列表。"""
     fetcher = Fetcher(delay=delay, timeout=timeout)
     rows = []
     print(f"\n手动抓取 {len(urls)} 个 URL...")
@@ -232,8 +225,7 @@ def fetch_urls_manual(urls: List[str], delay: float, timeout: int) -> List[dict]
                          "snippet": "", "text_len": 0, "reputation": 0,
                          "whitelist_hit": False, "whitelist_note": "",
                          "n_download_links": 0, "download_links": [],
-                         "penalties": [err], "bonuses": [], "note": sites.summarize(netloc),
-                         "status": "error"})
+                         "penalties": [err], "bonuses": [], "note": "", "status": "error"})
             continue
         ec = extract(html_text, base_url=url)
         rep = final_reputation(url, ec)
@@ -247,14 +239,13 @@ def fetch_urls_manual(urls: List[str], delay: float, timeout: int) -> List[dict]
             "n_download_links": len(ec.download_links),
             "download_links": ec.download_links,
             "penalties": rep.penalties, "bonuses": rep.bonuses,
-            "note": sites.summarize(netloc), "status": "ok",
+            "note": "", "status": "ok",
         })
     rows.sort(key=lambda x: (x["reputation"], x["text_len"]), reverse=True)
     return rows
 
 
 def print_to_terminal(rows: List[dict], show_text: bool = True) -> None:
-    """把抓取结果直接打印到终端（默认输出方式，配合 -f 才落盘）。"""
     print("\n" + "=" * 68)
     print("抓取结果总览")
     print("=" * 68)
@@ -282,7 +273,6 @@ def print_to_terminal(rows: List[dict], show_text: bool = True) -> None:
             txt = (r.get("text") or "").strip()
             if txt:
                 print(f"    --- 正文预览（{len(txt)} 字符）---")
-                # 每行限宽便于阅读
                 import shutil as _sh
                 w = _sh.get_terminal_size((100, 24)).columns - 8
                 w = max(40, w)
@@ -297,7 +287,6 @@ def print_to_terminal(rows: List[dict], show_text: bool = True) -> None:
 
 def run_downloads(rows: List[dict], threads: int, outdir: str,
                   use_ytdlp: bool = False, ytdlp_format: str = "bestvideo+bestaudio/best") -> List[dict]:
-    """从结果里提取下载链接并用 aria2/yt-dlp 批量下载。"""
     links = aria2.find_download_links(rows)
     if not links:
         print("\n[下载] 结果里没有识别到可下载文件链接。")
@@ -314,18 +303,24 @@ def run_downloads(rows: List[dict], threads: int, outdir: str,
     return results
 
 
+def run_ytdlp_video(url: str, threads: int, outdir: str, format_spec: str) -> dict:
+    """直接用 yt-dlp 下载视频（支持 B 站、YouTube 等）"""
+    os.makedirs(outdir, exist_ok=True)
+    # 这里可以直接复用 aria2.download_with_ytdlp 的逻辑
+    from scraper.aria2 import download_with_ytdlp
+    return download_with_ytdlp(url, outdir=outdir, format_spec=format_spec)
+
+
 def export(rows: List[dict], outdir: str, queries: List[str], title: str):
     print(f"\n[3/3] 导出报告到 {outdir}")
     meta = {"queries": ";".join(queries), "time": datetime.datetime.now().isoformat(
         timespec="seconds")}
 
-    # JSON 全量
     json_path = os.path.join(outdir, "scrape.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "results": rows}, f, ensure_ascii=False, indent=2)
     print(f"  JSON : {json_path}")
 
-    # CSV 摘要
     csv_path = os.path.join(outdir, "scrape.csv")
     with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=[
@@ -342,7 +337,6 @@ def export(rows: List[dict], outdir: str, queries: List[str], title: str):
             })
     print(f"  CSV  : {csv_path}")
 
-    # HTML 报告
     html_path = os.path.join(outdir, "report.html")
     rhtml = render_html(title, rows, meta)
     with open(html_path, "w", encoding="utf-8") as f:
@@ -353,13 +347,18 @@ def export(rows: List[dict], outdir: str, queries: List[str], title: str):
 
 def main():
     p = argparse.ArgumentParser(
-        description="自动抓取网上优质下载/资源站内容，支持手动网址抓取与 aria2 多线程下载")
+        description="自动抓取网上优质下载/资源站内容，支持手动网址抓取与 aria2/yt-dlp 多线程下载")
     p.add_argument("--query", "-q", action="append", help="搜索关键字（可多次）")
     p.add_argument("--results", "-r", type=int, default=10, help="每关键字 Bing 结果条数(页)")
     p.add_argument("--max-sites", "-m", type=int, default=20, help="最多抓取评估的站点数")
     # ---- 手动网址抓取 ----
     p.add_argument("--url", action="append", help="手动要抓取的网址（可多次，或 --url-file）")
     p.add_argument("--url-file", help="URL 文件路径，每行一个网址")
+    # ---- 视频下载（yt-dlp 直接处理 URL） ----
+    p.add_argument("--ytdlp-url", action="append",
+                   help="直接用 yt-dlp 下载视频（支持 B 站/YouTube 等），可多次")
+    p.add_argument("--ytdlp-format", default="bestvideo+bestaudio/best",
+                   help="yt-dlp 格式选择（默认 bestvideo+bestaudio/best）")
     # ---- 下载 ----
     p.add_argument("--download", action="store_true",
                    help="抓取完成后，把页面内识别到的下载链接交给 aria2 下载")
@@ -367,8 +366,6 @@ def main():
                    help="aria2 多线程下载线程数（-x/-s，默认8）")
     p.add_argument("--ytdlp", action="store_true",
                    help="对视频链接使用 yt-dlp 下载（需安装 yt-dlp）")
-    p.add_argument("--ytdlp-format", default="bestvideo+bestaudio/best",
-                   help="yt-dlp 格式选择（默认 bestvideo+bestaudio/best）")
     p.add_argument("--download-json", help="从已生成的 scrape.json 提取下载链接并下载")
     p.add_argument("--dl-out", default="downloads", help="下载输出目录（默认 downloads/）")
     # ---- 显示/保存 ----
@@ -394,8 +391,12 @@ def main():
         with open(args.download_json, "r", encoding="utf-8") as f:
             data = json.load(f)
         rows = data.get("results", [])
-        run_downloads(rows, threads=args.threads, outdir=args.dl_out,
-                      use_ytdlp=args.ytdlp, ytdlp_format=args.ytdlp_format)
+        from scraper.aria2 import batch_download
+        batch_download(
+            [l["url"] for l in aria2.find_download_links(rows)],
+            threads=args.threads, outdir=args.dl_out,
+            verbose=True, use_ytdlp=args.ytdlp, ytdlp_format=args.ytdlp_format
+        )
         return
 
     # ---------- 模式B：手动网址抓取（可选 +下载） ----------
@@ -413,6 +414,18 @@ def main():
         if args.download:
             run_downloads(rows, threads=args.threads, outdir=args.dl_out,
                           use_ytdlp=args.ytdlp, ytdlp_format=args.ytdlp_format)
+        return
+
+    # ---------- 模式C：yt-dlp 直接下载视频（新增） ----------
+    if args.ytdlp_url:
+        print(f"\n[yt-dlp] 直接下载 {len(args.ytdlp_url)} 个视频...")
+        os.makedirs(args.dl_out, exist_ok=True)
+        for i, url in enumerate(args.ytdlp_url, 1):
+            print(f"  [{i}/{len(args.ytdlp_url)}] yt-dlp 下载: {url}")
+            res = run_ytdlp_video(url, threads=args.threads, outdir=args.dl_out,
+                                  format_spec=args.ytdlp_format)
+            flag = "✅" if res["ok"] else "❌"
+            print(f"      {flag} {res['file']} | {res['detail'][:80]}")
         return
 
     # ---------- 模式C：Bing 搜索（可选 +下载） ----------
@@ -440,7 +453,6 @@ def main():
                     run_downloads(rows, threads=args.threads, outdir=args.dl_out,
                                   use_ytdlp=args.ytdlp, ytdlp_format=args.ytdlp_format)
                 return
-        # 模式 1: 默认 Bing 搜索
         q = input("输入搜索关键字(逗号分隔，留空用默认): ").strip()
         if q:
             queries = [x.strip() for x in q.split("，" if "，" in q else ",") if x.strip()]
