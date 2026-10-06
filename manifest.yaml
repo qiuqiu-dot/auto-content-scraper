@@ -1,0 +1,12 @@
+control:
+  Package: auto-content-scraper
+  Version: 0.1.0
+  Architecture: aarch64
+  Maintainer: qiuqiu-dot <3831394899@qq.com>
+  Description: Automated content scraper for Termux
+  Homepage: https://github.com/qiuqiu-dot/auto-content-scraper
+
+data_files:
+  bin/acscraper:
+    source: acscraper
+    perm: "755"

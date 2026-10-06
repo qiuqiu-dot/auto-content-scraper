@@ -28,3 +28,7 @@ data/
 .DS_Store
 Thumbs.db
 test_downloads/
+acscraper
+*.build/
+*.dist/
+*.onefile-build/

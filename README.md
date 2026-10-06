@@ -58,6 +58,10 @@ pip install requests beautifulsoup4
 #   Windows: 下载 aria2c.exe 并放入 PATH
 # 可选：视频下载
 #   pip install yt-dlp
+# 本体安装:
+#   curl -LO https://github.com/qiuqiu-dot/auto-content-scraper/releases/download/v0.1.0/auto-content-scraper_0.1.0_aarch#64.deb
+#   dpkg -i auto-content-scraper_0.1.0_aarch64.deb
+#   acscraper --help
 ```
 
 ## 使用方法
